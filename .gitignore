@@ -1,0 +1,45 @@
+# Local source copies and backups
+backup_before_*/
+DIFCVerilog-multidim/
+
+# IDE and editor
+.vscode/
+.claude/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Repository-level build/install output
+/build/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Experiment data
+/experiment/*
+!/experiment/README.md
+!/experiment/SOURCES.md
+
+# Build and simulation products
+*.o
+*.d
+*.out
+*.log
+*.vcd
+*.fst
+*~
+*.bak
+
+# Local review notes
+*-opensource-cleanup-summary.md
+
+# DIFC analysis output
+*_type.pl
+*_nodes.txt
+*_steps.txt
+*_portcheck.txt
+*_main.out
