@@ -6,6 +6,7 @@
 :- use_module(library(lists)).
 :- use_module(library(strings)).
 :- dynamic node_state/6.
+:- dynamic inferred_label_reason/3.
 :- initialization(main, main).
 
 main :-
@@ -14,6 +15,7 @@ main :-
     resolve_files(Config, NodeFile, StepFile, OutFile),
     garbage_collect,
     load_nodes(NodeFile),
+    apply_hierarchical_label_inference(StepFile),
     count_nodes(Count),
     format('Loaded ~w nodes.~n', [Count]),
     write('Starting propagation...'), nl,
@@ -123,6 +125,90 @@ nums_to_mask([N|Rest], Mask) :-
     nums_to_mask(Rest, RestMask),
     Bit is 1 << (N - 1),
     Mask is RestMask \/ Bit.
+
+
+% --- Hierarchical label inference -----------------------------------------
+%
+% This pre-pass reduces manual labels before ordinary DIFC propagation. It
+% uses only the original structural step file: if a flow edge can propagate
+% taint from From to To, then To can inherit From's basic/source label. The
+% pass never invents capability labels. Parent-to-child inference is blocked
+% only by an explicit capability on the child module/instance boundary node
+% emitted by the frontend; formal-port labels and internal-variable
+% capabilities are not boundary blockers.
+
+apply_hierarchical_label_inference(StepFile) :-
+    retractall(inferred_label_reason(_,_,_)),
+    load_hier_edges(StepFile, Edges),
+    apply_hierarchical_edges_until_stable(Edges).
+
+load_hier_edges(StepFile, Edges) :-
+    setup_call_cleanup(
+        open(StepFile, read, Stream),
+        load_hier_edges_stream(Stream, [], RevEdges),
+        close(Stream)
+    ),
+    reverse(RevEdges, Edges).
+
+load_hier_edges_stream(Stream, Acc, Edges) :-
+    read_line_to_string(Stream, Line),
+    ( Line == end_of_file -> Edges = Acc
+    ; ( parse_step_line(Line, step(Desc, From, To, _PcP)) ->
+          load_hier_edges_stream(Stream, [edge(Desc, From, To)|Acc], Edges)
+      ; load_hier_edges_stream(Stream, Acc, Edges)
+      )
+    ).
+
+apply_hierarchical_edges_until_stable(Edges) :-
+    ( infer_one_hierarchical_edge(Edges) ->
+        apply_hierarchical_edges_until_stable(Edges)
+    ; true
+    ).
+
+infer_one_hierarchical_edge([edge(Desc, From, To)|_]) :-
+    infer_hierarchical_edge(From, To, Desc), !.
+infer_one_hierarchical_edge([_|Rest]) :-
+    infer_one_hierarchical_edge(Rest).
+
+infer_hierarchical_edge(From, To, Desc) :-
+    \+ hierarchy_boundary_blocks(From, To),
+    node_basic_mask(From, Mask),
+    Mask =\= 0,
+    merge_inferred_basic(To, Mask, flow(From, Desc)).
+
+node_basic_mask(Name, Mask) :-
+    node_state(Name, Basic, _Cap, _Neg, _Taint, _Path), !,
+    Mask = Basic.
+node_basic_mask(_, 0).
+
+merge_inferred_basic(Name, Mask, Reason) :-
+    ( node_state(Name, Basic, Cap, Neg, Taint, Path) ->
+        NewBasic is Basic \/ Mask,
+        NewTaint is Taint \/ Mask,
+        ( NewBasic =:= Basic, NewTaint =:= Taint -> fail
+        ; retract(node_state(Name, Basic, Cap, Neg, Taint, Path)),
+          assertz(node_state(Name, NewBasic, Cap, Neg, NewTaint, Path)),
+          assertz(inferred_label_reason(Name, Mask, Reason))
+        )
+    ; NewBasic is Mask,
+      assertz(node_state(Name, NewBasic, 0, 0, NewBasic, [])),
+      assertz(inferred_label_reason(Name, Mask, Reason))
+    ).
+
+hierarchy_boundary_blocks(From, To) :-
+    module_boundary_with_capability(Boundary),
+    inside_scope(To, Boundary),
+    \+ inside_scope(From, Boundary), !.
+
+module_boundary_with_capability(Boundary) :-
+    node_state(Boundary, _Basic, Cap, _Neg, _Taint, _Path),
+    Cap =\= 0.
+
+inside_scope(Name, Scope) :-
+    Name == Scope, !.
+inside_scope(Name, Scope) :-
+    atom_concat(Scope, '_', Prefix),
+    atom_concat(Prefix, _Rest, Name).
 
 propagate_until_stable(OutStream, StepFile) :-
     setup_call_cleanup(
