@@ -355,6 +355,9 @@ void outputPorts(ostream & out, TypeEnv& env) {
 		if (!instance_str.empty()) {
     instance_str[0] = std::toupper(instance_str[0]);
 }
+	if (env.module->get_sec_label() != nullptr && !env.module->get_sec_label()->positive.empty()) {
+		printNodeToFile(out, instance_str, instance_str + ".", {1}, env.module->get_sec_label()->positive, {});
+	}
 	for (const auto& pair : *env.varsToType) {
 		const perm_string& name = pair.first;
 
